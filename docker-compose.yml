@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:15
+    container_name: nsp_alarm_db
+    restart: always
+    environment:
+      POSTGRES_DB: alarms
+      POSTGRES_USER: nspuser
+      POSTGRES_PASSWORD: nsppass
+    volumes:
+      - nsp_alarm_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nspuser -d alarms"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  engine:
+    build: .
+    container_name: nsp_rest_alarm_engine
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  nsp_alarm_pgdata:

@@ -1,0 +1,46 @@
+docker exec -it nsp_alarm_db psql -U nspuser -d alarms -c "SELECT COUNT(*) FROM active_alarms;"
+
+
+docker exec -it nsp_alarm_db psql -U nspuser -d alarms -c \
+"SELECT id, payload IS NOT NULL AS has_payload FROM active_alarms LIMIT 10;"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -t -c "SELECT COUNT(*) FROM alarm_history;"
+
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -t -c "SELECT COUNT(*) FROM alarm_snapshots;"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -c \
+"SELECT id, severity, first_seen, last_seen FROM active_alarms ORDER BY last_seen DESC LIMIT 5;"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -c \
+"SELECT jsonb_pretty(payload) FROM active_alarms LIMIT 1;"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -c \
+"SELECT alarm_id, duration_seconds, cleared_at FROM alarm_history ORDER BY cleared_at DESC LIMIT 5;"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -c "SELECT NOW();"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -c \
+"SELECT DISTINCT payload->>'guiLabel' FROM active_alarms;"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -c \
+"SELECT payload->>'severity', COUNT(*) FROM active_alarms GROUP BY payload->>'severity';"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -c \
+"SELECT id, payload->>'guiLabel' FROM active_alarms WHERE payload->>'corrObjId'='2872';"
+
+docker exec nsp_alarm_db \
+psql -U nspuser -d alarms -t -A -c "SELECT COUNT(*) FROM active_alarms;"
+
+
+docker exec -it nsp_alarm_db psql -U nspuser -d alarms -c \
+"SELECT id, jsonb_pretty(payload) FROM active_alarms;"
