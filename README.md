@@ -1,265 +1,177 @@
 # NSP REST Alarm Engine
 
-Production-ready REST-based alarm polling engine for Nokia NSP.
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/postgresql-15%2B-336791?logo=postgresql&logoColor=white)
+![Polling](https://img.shields.io/badge/mode-REST%20polling-orange)
 
-This system polls NSP northbound REST API (`/oms1350/data/npr/alarms`),
-detects new and cleared alarms, stores state in PostgreSQL,
-and sends notifications (e.g., WhatsApp).
+REST-based alarm polling service for Nokia NSP that:
+- authenticates with OAuth client credentials,
+- polls active alarms on a fixed schedule,
+- detects NEW vs CLEARED alarms,
+- stores active/snapshot/history state in PostgreSQL.
 
----
+This project is intended for always-on deployment (Docker or Linux service).
 
-## 🏗 Architecture
+## How It Works
 
-NSP REST API  
-        ↓  
-REST Poller  
-        ↓  
-Alarm Lifecycle Engine  
-        ↓  
-PostgreSQL (active_alarms table)  
-        ↓  
-Notifier (WhatsApp or custom endpoint)
+1. `main.py` waits for the next aligned polling boundary.
+2. `rest_client.py` calls NSP alarms endpoint with a bearer token.
+3. `alarm_lifecycle.py` filters noisy alarms and computes lifecycle transitions.
+4. `db.py` updates `active_alarms`, writes `alarm_snapshots`, and archives cleared alarms to `alarm_history`.
+5. Periodic cleanup removes old snapshot/history rows (default retention: 7 days).
 
-This replaces Kafka-based subscription with REST polling.
+## Project Structure
 
----
+- `main.py` - scheduler loop, retry handling, snapshots, retention cleanup
+- `config.py` - environment loading and endpoint construction
+- `token_manager.py` - OAuth token fetch + refresh logic
+- `rest_client.py` - NSP alarms API client
+- `alarm_lifecycle.py` - exclusion/inclusion rules + new/clear detection
+- `db.py` - PostgreSQL tables and persistence methods
+- `Dockerfile` - container image build
+- `docker-compose.yml` - local/VM deployment with PostgreSQL
 
-## 📁 Project Structure
+## Requirements
 
+- Python 3.11+
+- PostgreSQL 15+ (or compatible)
+- Network access to NSP REST gateway
+- Valid NSP OAuth client credentials
 
-nsp_rest_alarm_engine/
-├── main.py # Daemon loop
-├── rest_client.py # NSP REST client
-├── token_manager.py # OAuth token manager
-├── alarm_lifecycle.py # Alarm state engine
-├── db.py # PostgreSQL integration
-├── notifier.py # Notification sender
-├── config.py # Environment config
-├── requirements.txt
-├── Dockerfile
-└── .env.example
+## Environment Variables
 
+Create a `.env` file in the repo root:
 
-
----
-
-## 🔐 Features
-
-- OAuth token auto-refresh
-- Snapshot-based alarm detection
-- New alarm detection
-- Clear detection
-- PostgreSQL-backed state
-- WhatsApp notification integration
-- Dockerized deployment
-- Graceful shutdown
-- Production polling loop
-
----
-
-## ⚙️ Environment Variables
-
-Copy `.env.example` to `.env` and edit:
-
-
+```env
 NSP_HOST=192.168.42.7
 NSP_PORT=8443
 CLIENT_ID=your_client_id
 CLIENT_SECRET=your_client_secret
 VERIFY_SSL=false
 
-DATABASE_URL=postgresql://user:pass@db:5432/alarms
+DATABASE_URL=postgresql://nspuser:nsppass@db:5432/alarms
 WHATSAPP_URL=http://whatsapp:3000/send
 
 POLL_INTERVAL=10
+```
 
+Notes:
+- `VERIFY_SSL=true` is recommended in production with proper CA trust.
+- `POLL_INTERVAL` is in seconds and should be a positive integer.
+- `WHATSAPP_URL` is currently loaded from config but not used by the existing code path.
 
-### Variable Description
+## Run Locally (Without Docker)
 
-| Variable | Description |
-|----------|-------------|
-| NSP_HOST | NSP IP/hostname |
-| NSP_PORT | NSP HTTPS port |
-| CLIENT_ID | OAuth client ID |
-| CLIENT_SECRET | OAuth client secret |
-| VERIFY_SSL | Enable SSL verification (true/false) |
-| DATABASE_URL | PostgreSQL connection string |
-| WHATSAPP_URL | Notification endpoint |
-| POLL_INTERVAL | Polling interval in seconds |
-
----
-
-## 🗄 Database Schema
-
-The engine automatically creates:
-
-```sql
-CREATE TABLE active_alarms (
-    id BIGINT PRIMARY KEY,
-    severity TEXT,
-    first_seen TIMESTAMP,
-    last_seen TIMESTAMP
-);
-
-Behavior:
-
-If alarm ID appears for first time → NEW
-
-If alarm ID missing in next poll → CLEARED
-
-If alarm persists → updated last_seen
-
-🚀 Running Locally
-1️⃣ Install dependencies
+```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-2️⃣ Configure environment
-cp .env.example .env
-
-Edit .env
-
-3️⃣ Run
-
 python main.py
-🐳 Running with Docker
-Build image
-docker build -t nsp-rest-engine .
-Run container
-docker run --env-file .env nsp-rest-engine
-🐳 Example docker-compose (Optional)
-version: '3.8'
+```
 
-services:
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: alarms
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-    ports:
-      - "5432:5432"
+## Run With Docker Compose
 
-  engine:
-    build: .
-    env_file: .env
-    depends_on:
-      - db
+Build and start:
 
-Run:
+```bash
+docker compose up -d --build
+```
 
-docker-compose up --build
-🔁 Alarm Detection Logic
+Check status:
 
-Each polling cycle:
+```bash
+docker compose ps
+```
 
-Fetch current alarm list from NSP
+Follow logs:
 
-Extract alarm IDs
+```bash
+docker compose logs -f engine
+```
 
-Compare with database state
+Stop:
 
-Detect:
+```bash
+docker compose down
+```
 
-NEW alarms
+## First-Run Verification Checklist
 
-CLEARED alarms
+Use this checklist after first deployment:
 
-Update database
+- [ ] `docker compose ps` shows `db` as healthy and `engine` as running
+- [ ] `docker compose logs -f engine` shows repeated `[POLL] Completed` lines
+- [ ] no recurring `[ERROR]` or auth failures in engine logs
+- [ ] `active_alarms` contains current active alarms
+- [ ] `alarm_snapshots` receives rows at `:00` and `:30`
+- [ ] cleared alarms are moved into `alarm_history` with `duration_seconds`
 
-Send notifications
+Quick DB checks (inside Postgres container):
 
-⚠️ Production Recommendations
+```bash
+docker compose exec db psql -U nspuser -d alarms -c "SELECT COUNT(*) FROM active_alarms;"
+docker compose exec db psql -U nspuser -d alarms -c "SELECT COUNT(*) FROM alarm_snapshots;"
+docker compose exec db psql -U nspuser -d alarms -c "SELECT COUNT(*) FROM alarm_history;"
+```
 
-For production environments:
+## Database Schema
 
-Enable SSL verification (VERIFY_SSL=true)
+Tables are auto-created on startup:
 
-Use proper CA certificates
+- `active_alarms`
+  - current alarms keyed by `id`
+  - stores `severity`, `first_seen`, `last_seen`, full JSON payload
+- `alarm_snapshots`
+  - periodic snapshots of active alarms
+  - written at minute `00` and `30`
+- `alarm_history`
+  - cleared alarms with duration from `first_seen` to `cleared_at`
 
-Use connection pooling (psycopg2 pool or SQLAlchemy)
+Indexes are created for key query columns (`last_seen`, `snapshot_time`, `alarm_id`, `cleared_at`).
 
-Add structured logging (logging module)
+## Alarm Filtering Logic
 
-Add log rotation
+In `alarm_lifecycle.py`:
+- Always include alarms containing:
+  - `postFEC BER`
+  - `Optical Lane High`
+  - `Optical Lane Low`
+- Exclude alarms containing:
+  - `Threshold Crossing`
+  - `Quality Threshold`
+  - `Pluggable Module missing`
 
-Add health endpoint
+You can tune these keyword lists for your environment.
 
-Add severity filtering
+## Scheduling Behavior
 
-Add pagination if alarm list grows large
+- Polling aligns to interval boundaries using local timezone (`Asia/Dhaka`).
+- A small jitter is added to reduce synchronized bursts.
+- Duplicate triggers for the same slot are skipped.
+- On NSP HTTP 500 responses, polling retries with exponential backoff.
+- Graceful shutdown is handled for `SIGINT` and `SIGTERM`.
 
-📊 Optional Improvements
+## Common Troubleshooting
 
-Prometheus metrics endpoint
+- Auth failures (`401`):
+  - verify `CLIENT_ID`/`CLIENT_SECRET`
+  - verify NSP auth URL reachability
+- TLS/SSL issues:
+  - use `VERIFY_SSL=false` for testing only
+  - enable cert validation for production
+- DB connection errors:
+  - confirm `DATABASE_URL`
+  - ensure PostgreSQL is reachable from engine container/host
+- Docker container naming conflicts:
+  - fixed names were removed from compose; recreate stack with latest file
 
-Severity threshold filtering
+## Security Notes
 
-Alarm history table
+- Do not commit `.env` with real credentials.
+- Rotate NSP client secret regularly.
+- Prefer private networking and firewall rules between engine and NSP/DB.
 
-Correlation logic
+## License
 
-High-availability deployment
-
-Kubernetes deployment
-
-Retry/backoff logic
-
-Alarm debounce logic
-
-🧠 REST vs Kafka
-
-This engine uses REST polling.
-
-Advantages:
-
-Works when Kafka not exposed
-
-Simpler deployment
-
-Fewer infrastructure dependencies
-
-Trade-offs:
-
-Not real-time
-
-Slightly higher API load
-
-Snapshot-based detection
-
-🛑 Graceful Shutdown
-
-The engine handles:
-
-SIGINT
-
-SIGTERM
-
-Safe for:
-
-Docker stop
-
-systemd stop
-
-Kubernetes termination
-
-📜 License
-
-Internal / Private Project
-
-👨‍💻 Maintainer
-
-Developed for production NSP alarm monitoring via REST interface.
-
-
----
-
-Now your project looks clean, structured, and enterprise-ready.
-
-If you want, I can next:
-
-- Add structured logging (production-grade)
-- Add alarm history table
-- Add HA-ready version
-- Convert to async high-performance version
-- Or generate a proper GitHub-ready version with badges and versioning
-
-You’re officially building real infrastructure now. 🔥
+Internal/private use unless your organization defines otherwise.
